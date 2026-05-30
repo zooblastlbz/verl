@@ -36,6 +36,7 @@ from vllm.v1.engine.async_llm import AsyncLLM
 
 from verl.utils.config import omega_conf_to_dataclass
 from verl.utils.device import get_resource_name, get_visible_devices_keyword, is_torch_npu_available
+from verl.utils.model import is_qwen3_omni_full_config, is_qwen3_omni_thinker_config
 from verl.utils.net_utils import get_free_port, is_valid_ipv6_address
 from verl.utils.profiler import DistProfiler, build_vllm_profiler_args
 from verl.utils.tokenizer import normalize_token_ids
@@ -232,7 +233,13 @@ class vLLMHttpServer:
 
             set_expandable_segments(True)
 
-        quantization, hf_overrides = self._apply_quantization()
+        user_hf_overrides = self._parse_hf_overrides(engine_kwargs.pop("hf_overrides", None))
+        model_hf_overrides = {}
+        if getattr(self.model_config, "load_thinker_only", False):
+            model_hf_overrides["enable_audio_output"] = False
+
+        quantization, quantization_hf_overrides = self._apply_quantization()
+        hf_overrides = {**user_hf_overrides, **model_hf_overrides, **quantization_hf_overrides}
 
         compilation_config = engine_kwargs.pop("compilation_config", None) or {}
         if isinstance(compilation_config, str):
@@ -809,6 +816,16 @@ class vLLMHttpServer:
 
     def _validate_configs(self) -> None:
         """Validate config/model_config after initialisation."""
+        if (
+            is_qwen3_omni_full_config(self.model_config.hf_config)
+            or is_qwen3_omni_thinker_config(self.model_config.hf_config)
+        ) and _VLLM_VERSION < version.parse("0.13.0"):
+            raise ValueError(
+                "Qwen3-Omni thinker rollout requires vLLM >= 0.13.0. "
+                f"Found vLLM {vllm.__version__}. Upgrade vLLM, or install vLLM-Omni and pass "
+                "+actor_rollout_ref.rollout.engine_kwargs.vllm.omni=True with thinker stage args."
+            )
+
         max_position_embeddings = get_max_position_embeddings(self.model_config.hf_config)
         if self.config.max_model_len is None:
             self.config.max_model_len = max_position_embeddings
@@ -847,6 +864,13 @@ class vLLMHttpServer:
             repetition_penalty=1.0,
             max_new_tokens=self.config.response_length,
         )
+
+    def _parse_hf_overrides(self, hf_overrides: Any) -> dict:
+        if hf_overrides is None:
+            return {}
+        if isinstance(hf_overrides, str):
+            return json.loads(hf_overrides)
+        return dict(hf_overrides)
 
     def _apply_quantization(self) -> tuple[Optional[str], dict]:
         """Process quantization config. Returns (quantization_str, hf_overrides)."""

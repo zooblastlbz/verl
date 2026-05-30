@@ -21,6 +21,9 @@ use_shm: False
 # whether to trust remote code.
 trust_remote_code: False
 
+# whether to load only the Qwen3-Omni thinker module for training.
+load_thinker_only: False
+
 # custom chat template for the model
 custom_chat_template: null
 

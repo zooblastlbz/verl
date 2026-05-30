@@ -28,6 +28,7 @@ and is designed to be fully replaceable by other agent frameworks such as:
 """
 
 import asyncio
+import inspect
 import logging
 import os
 import random
@@ -74,6 +75,43 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 DEFAULT_ROUTING_CACHE_SIZE = 10000
+
+
+def _first_present(mapping: dict[str, Any] | None, *keys: str) -> Any:
+    if not mapping:
+        return None
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def _get_audio_seqlens(multi_modal_inputs: dict[str, torch.Tensor]) -> torch.Tensor | None:
+    audio_seqlens = multi_modal_inputs.get("audio_seqlens")
+    if audio_seqlens is not None:
+        return audio_seqlens
+
+    feature_attention_mask = multi_modal_inputs.get("feature_attention_mask")
+    if feature_attention_mask is None:
+        return None
+    return feature_attention_mask.sum(dim=-1).to(torch.long)
+
+
+def _get_use_audio_in_video(mm_processor_kwargs: dict[str, Any] | None) -> bool:
+    videos_kwargs = _first_present(mm_processor_kwargs, "videos_kwargs") or {}
+    if "use_audio_in_video" in videos_kwargs:
+        return bool(videos_kwargs["use_audio_in_video"])
+    return bool(_first_present(mm_processor_kwargs, "use_audio_in_video") or False)
+
+
+def _filter_rope_kwargs(get_rope_index, rope_kwargs: dict[str, Any]) -> dict[str, Any]:
+    signature = inspect.signature(get_rope_index)
+    parameters = signature.parameters.values()
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return {key: value for key, value in rope_kwargs.items() if value is not None}
+
+    supported_keys = set(signature.parameters)
+    return {key: value for key, value in rope_kwargs.items() if value is not None and key in supported_keys}
 
 
 class AgentLoopMetrics(BaseModel):
@@ -809,6 +847,11 @@ class AgentLoopWorker:
         multi_modal_kwargs = {
             "image_grid_thw": multi_modal_inputs.get("image_grid_thw"),
             "video_grid_thw": multi_modal_inputs.get("video_grid_thw"),
+            "audio_seqlens": _get_audio_seqlens(multi_modal_inputs),
+            "second_per_grids": _first_present(
+                multi_modal_inputs, "second_per_grids", "second_per_grid_ts", "video_second_per_grid"
+            ),
+            "use_audio_in_video": _get_use_audio_in_video(mm_processor_kwargs),
         }
         # For transformers>=5.3.0, mm_token_type_ids is only used to calculate position ids.
         if multi_modal_inputs.pop("mm_token_type_ids", None) is not None:
@@ -822,6 +865,7 @@ class AgentLoopWorker:
             multi_modal_kwargs["mm_token_type_ids"] = mm_token_type_ids
 
         # Model's get_rope_index has been dynamically bind to the processor.
+        multi_modal_kwargs = _filter_rope_kwargs(self.processor.get_rope_index, multi_modal_kwargs)
         vision_position_ids, _ = self.processor.get_rope_index(
             input_ids=input_ids,
             attention_mask=attention_mask,

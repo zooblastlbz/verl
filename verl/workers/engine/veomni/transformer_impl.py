@@ -263,6 +263,8 @@ class VeOmniEngine(FSDPEngine):
         Subclasses can override to modify the HF config before model construction
         (e.g. VeOmniEngineWithValueHead rewrites architectures to ForTokenClassification).
         """
+        if self.model_config.load_thinker_only:
+            return self.model_config.hf_config
         return self.model_config.local_hf_config_path
 
     def _build_model_optimizer(self):

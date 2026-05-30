@@ -16,7 +16,8 @@ ray[default]
 tensordict>=0.8.0,<=0.10.0,!=0.9.0
 torchdata
 transformers
-# vllm==0.8.4
+# Qwen3-Omni thinker rollout requires vLLM >= 0.13.0, or vLLM-Omni with thinker stage args.
+# vllm>=0.13.0
 wandb
 packaging>=20.0
 uvicorn

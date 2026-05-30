@@ -32,7 +32,8 @@ from verl.utils.device import is_cuda_available
 from verl.utils.fs import copy_to_local, is_non_local, local_mkdir_safe
 from verl.utils.fsdp_utils import fsdp_version, get_fsdp_full_state_dict, get_fsdp_state_ctx
 from verl.utils.logger import log_with_rank
-from verl.utils.transformers_compat import drop_tied_target_keys, get_auto_model_for_vision2seq
+from verl.utils.model import get_hf_auto_model_class
+from verl.utils.transformers_compat import drop_tied_target_keys
 
 from .checkpoint_manager import BaseCheckpointManager
 
@@ -347,18 +348,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 hf_local_path = os.path.join(local_path, "huggingface")
                 os.makedirs(hf_local_path, exist_ok=True)
 
-                if "ForTokenClassification" in model_config.architectures[0]:
-                    from transformers import AutoModelForTokenClassification
-
-                    auto_model_cls = AutoModelForTokenClassification
-                elif "ForCausalLM" in model_config.architectures[0]:
-                    from transformers import AutoModelForCausalLM
-
-                    auto_model_cls = AutoModelForCausalLM
-                elif "ForConditionalGeneration" in model_config.architectures[0]:
-                    auto_model_cls = get_auto_model_for_vision2seq()
-                else:
-                    raise NotImplementedError(f"Unknown architecture {model_config['architectures']}")
+                auto_model_cls = get_hf_auto_model_class(model_config)
 
                 with init_empty_weights():
                     save_model = auto_model_cls.from_config(

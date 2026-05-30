@@ -21,7 +21,7 @@ from verl.base_config import BaseConfig
 from verl.utils import hf_processor, hf_tokenizer
 from verl.utils.fs import copy_to_local
 from verl.utils.import_utils import import_external_libs
-from verl.utils.model import get_generation_config, update_model_config
+from verl.utils.model import get_generation_config, get_qwen3_omni_thinker_config, update_model_config
 
 __all__ = ["HFModelConfig", "MtpConfig"]
 
@@ -83,6 +83,7 @@ class HFModelConfig(BaseConfig):
         "local_hf_config_path",
         "local_tokenizer_path",
         "mtp",
+        "load_thinker_only",
     }
 
     path: str = MISSING
@@ -106,6 +107,9 @@ class HFModelConfig(BaseConfig):
     # whether to use shared memory
     use_shm: bool = False
     trust_remote_code: bool = False
+
+    # whether to load only the Qwen3-Omni thinker module for training
+    load_thinker_only: bool = False
 
     # custom chat template for the model
     custom_chat_template: Optional[str] = None
@@ -204,6 +208,9 @@ class HFModelConfig(BaseConfig):
         )
         override_config_kwargs.update(override_config)
         update_model_config(self.hf_config, override_config_kwargs=override_config_kwargs)
+
+        if self.load_thinker_only:
+            self.hf_config = get_qwen3_omni_thinker_config(self.hf_config)
 
         self.share_embeddings_and_output_weights = getattr(self.hf_config, "tie_word_embeddings", False)
 

@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import difflib
+import inspect
 import logging
 import os
 from enum import Enum
@@ -24,10 +25,48 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast, Processor
 
 from verl.tools.schemas import OpenAIFunctionToolCall, OpenAIFunctionToolSchema, ToolResponse
 from verl.utils.model import compute_position_id_with_mask
-from verl.utils.tokenizer import build_multimodal_processor_inputs
+from verl.utils.tokenizer import build_multimodal_processor_inputs, get_processor_token_id
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+
+
+def _first_present(mapping: dict[str, Any] | None, *keys: str) -> Any:
+    if not mapping:
+        return None
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def _get_audio_seqlens(multi_modal_inputs: dict[str, torch.Tensor]) -> torch.Tensor | None:
+    audio_seqlens = multi_modal_inputs.get("audio_seqlens")
+    if audio_seqlens is not None:
+        return audio_seqlens
+
+    feature_attention_mask = multi_modal_inputs.get("feature_attention_mask")
+    if feature_attention_mask is None:
+        return None
+    return feature_attention_mask.sum(dim=-1).to(torch.long)
+
+
+def _get_use_audio_in_video(mm_processor_kwargs: dict[str, Any] | None) -> bool:
+    videos_kwargs = _first_present(mm_processor_kwargs, "videos_kwargs") or {}
+    if "use_audio_in_video" in videos_kwargs:
+        return bool(videos_kwargs["use_audio_in_video"])
+    return bool(_first_present(mm_processor_kwargs, "use_audio_in_video") or False)
+
+
+def _filter_rope_kwargs(get_rope_index, rope_kwargs: dict[str, Any]) -> dict[str, Any]:
+    signature = inspect.signature(get_rope_index)
+    parameters = signature.parameters.values()
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return {key: value for key, value in rope_kwargs.items() if value is not None}
+
+    supported_keys = set(signature.parameters)
+    return {key: value for key, value in rope_kwargs.items() if value is not None and key in supported_keys}
+
 
 BASE_CHAT_HISTORY = [
     {"role": "system", "content": "You are a helpful assistant."},
@@ -286,6 +325,46 @@ class AsyncRolloutRequest(BaseModel):
         multi_modal_inputs: Optional[dict[str, torch.Tensor]] = None,
         mm_processor_kwargs: Optional[dict[str, Any]] = None,
     ) -> torch.Tensor:
+        if hasattr(processing_class, "get_rope_index"):
+            assert input_ids.dim() == 2 and input_ids.shape[0] == 1, (
+                f"input_ids should be 2D with batch size 1, but got shape {input_ids.shape}"
+            )
+            assert attention_mask.dim() == 2 and attention_mask.shape[0] == 1, (
+                f"attention_mask should be 2D with batch size 1, but got shape {attention_mask.shape}"
+            )
+            multi_modal_inputs = dict(multi_modal_inputs or {})
+            multi_modal_kwargs = {
+                "image_grid_thw": multi_modal_inputs.get("image_grid_thw"),
+                "video_grid_thw": multi_modal_inputs.get("video_grid_thw"),
+                "audio_seqlens": _get_audio_seqlens(multi_modal_inputs),
+                "second_per_grid_ts": _first_present(
+                    multi_modal_inputs, "second_per_grid_ts", "video_second_per_grid"
+                ),
+                "second_per_grids": _first_present(
+                    multi_modal_inputs, "second_per_grids", "second_per_grid_ts", "video_second_per_grid"
+                ),
+                "use_audio_in_video": _get_use_audio_in_video(mm_processor_kwargs),
+            }
+            if multi_modal_inputs.get("mm_token_type_ids") is not None:
+                mm_token_type_ids = torch.zeros_like(input_ids)
+                image_token_id = get_processor_token_id(processing_class, "image")
+                video_token_id = get_processor_token_id(processing_class, "video")
+                if image_token_id is not None:
+                    mm_token_type_ids[0][input_ids[0] == image_token_id] = 1
+                if video_token_id is not None:
+                    mm_token_type_ids[0][input_ids[0] == video_token_id] = 2
+                multi_modal_kwargs["mm_token_type_ids"] = mm_token_type_ids
+
+            multi_modal_kwargs = _filter_rope_kwargs(processing_class.get_rope_index, multi_modal_kwargs)
+            position_ids, _ = processing_class.get_rope_index(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                **multi_modal_kwargs,
+            )
+            if position_ids.dim() == 3 and position_ids.shape[1] == 1:
+                position_ids = position_ids[:, 0]
+            return position_ids
+
         # special case for qwen2vl
         is_qwen2vl = (
             hasattr(processing_class, "image_processor")

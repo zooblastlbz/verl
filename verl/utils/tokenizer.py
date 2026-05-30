@@ -218,6 +218,17 @@ def hf_processor(name_or_path, **kwargs):
                 from transformers.models.qwen3_vl import Qwen3VLModel
 
                 model_class = Qwen3VLModel
+            case "Qwen3OmniMoeProcessor":
+                from transformers import Qwen3OmniMoeThinkerForConditionalGeneration
+
+                from verl.utils.model import get_qwen3_omni_thinker_config
+
+                processor.config = get_qwen3_omni_thinker_config(config)
+                if not hasattr(processor, "spatial_merge_size"):
+                    processor.spatial_merge_size = getattr(processor.image_processor, "merge_size", None)
+                if processor.spatial_merge_size is None:
+                    processor.spatial_merge_size = getattr(processor.config.vision_config, "spatial_merge_size", 2)
+                model_class = Qwen3OmniMoeThinkerForConditionalGeneration
             case "Glm4vImageProcessor":
                 from transformers.models.glm4v import Glm4vModel
 
@@ -229,6 +240,10 @@ def hf_processor(name_or_path, **kwargs):
 
         if model_class is not None:
             processor.get_rope_index = types.MethodType(model_class.get_rope_index, processor)
+            if hasattr(model_class, "get_llm_pos_ids_for_vision"):
+                processor.get_llm_pos_ids_for_vision = types.MethodType(
+                    model_class.get_llm_pos_ids_for_vision, processor
+                )
             if hasattr(model_class, "get_vision_position_ids"):
                 processor.get_vision_position_ids = types.MethodType(model_class.get_vision_position_ids, processor)
     except Exception as e:

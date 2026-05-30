@@ -15,6 +15,7 @@
 Utilities to create common models from huggingface
 """
 
+import copy
 import json
 import os
 import re
@@ -57,6 +58,96 @@ from verl.utils.transformers_compat import get_auto_model_for_vision2seq
 AutoModelForVision2Seq = get_auto_model_for_vision2seq()
 
 _VARLEN_MULTI_MODAL_KEYS = {"input_features", "feature_attention_mask"}
+
+QWEN3_OMNI_FULL_MODEL_TYPE = "qwen3_omni_moe"
+QWEN3_OMNI_THINKER_MODEL_TYPE = "qwen3_omni_moe_thinker"
+QWEN3_OMNI_FULL_ARCHITECTURE = "Qwen3OmniMoeForConditionalGeneration"
+QWEN3_OMNI_THINKER_ARCHITECTURE = "Qwen3OmniMoeThinkerForConditionalGeneration"
+
+_QWEN3_OMNI_THINKER_TOKEN_DEFAULTS = {
+    "audio_token_id": 151646,
+    "image_token_id": 151655,
+    "video_token_id": 151656,
+    "vision_start_token_id": 151652,
+    "audio_start_token_id": 151647,
+    "position_id_per_seconds": 25,
+}
+
+
+def _get_architecture(config) -> str | None:
+    architectures = getattr(config, "architectures", None)
+    if architectures is None or len(architectures) == 0:
+        return None
+    return architectures[0]
+
+
+def is_qwen3_omni_full_config(hf_config) -> bool:
+    """Return whether ``hf_config`` is the composite Qwen3-Omni config."""
+
+    return (
+        getattr(hf_config, "model_type", None) == QWEN3_OMNI_FULL_MODEL_TYPE
+        or _get_architecture(hf_config) == QWEN3_OMNI_FULL_ARCHITECTURE
+    )
+
+
+def is_qwen3_omni_thinker_config(hf_config) -> bool:
+    """Return whether ``hf_config`` already targets the Qwen3-Omni thinker."""
+
+    return (
+        getattr(hf_config, "model_type", None) == QWEN3_OMNI_THINKER_MODEL_TYPE
+        or _get_architecture(hf_config) == QWEN3_OMNI_THINKER_ARCHITECTURE
+    )
+
+
+def _copy_config_attr(source, target, attr: str, *, copy_to_text_config: bool = False) -> None:
+    if not hasattr(source, attr):
+        return
+
+    value = getattr(source, attr)
+    if value is None:
+        return
+
+    setattr(target, attr, value)
+    text_config = getattr(target, "text_config", None)
+    if copy_to_text_config and text_config is not None:
+        setattr(text_config, attr, value)
+
+
+def get_qwen3_omni_thinker_config(hf_config):
+    """Extract a trainable Qwen3-Omni thinker config from the composite config.
+
+    Qwen3-Omni's top-level ``Qwen3OmniMoeForConditionalGeneration`` owns the
+    frozen audio-output modules as ``talker`` and ``code2wav``. RL training only
+    needs the thinker submodule, whose checkpoint keys are loadable from the
+    same model path via ``Qwen3OmniMoeThinkerForConditionalGeneration``.
+    """
+
+    if is_qwen3_omni_thinker_config(hf_config):
+        thinker_config = copy.deepcopy(hf_config)
+    elif is_qwen3_omni_full_config(hf_config) and hasattr(hf_config, "thinker_config"):
+        thinker_config = copy.deepcopy(hf_config.thinker_config)
+    else:
+        raise ValueError(
+            "load_thinker_only is only supported for Qwen3-Omni configs, "
+            f"got model_type={getattr(hf_config, 'model_type', None)!r}, "
+            f"architectures={getattr(hf_config, 'architectures', None)!r}."
+        )
+
+    thinker_config.architectures = [QWEN3_OMNI_THINKER_ARCHITECTURE]
+    setattr(thinker_config, "model_type", QWEN3_OMNI_THINKER_MODEL_TYPE)
+
+    # Preserve tokenizer/runtime overrides that are usually attached to the
+    # top-level config after AutoConfig loading.
+    for attr in ("bos_token_id", "eos_token_id", "pad_token_id"):
+        _copy_config_attr(hf_config, thinker_config, attr, copy_to_text_config=True)
+    for attr in ("torch_dtype", "_attn_implementation"):
+        _copy_config_attr(hf_config, thinker_config, attr, copy_to_text_config=True)
+
+    for attr, default_value in _QWEN3_OMNI_THINKER_TOKEN_DEFAULTS.items():
+        if not hasattr(thinker_config, attr) or getattr(thinker_config, attr) is None:
+            setattr(thinker_config, attr, getattr(hf_config, attr, default_value))
+
+    return thinker_config
 
 
 class LambdaLayer(nn.Module):
@@ -684,6 +775,17 @@ _architecture_to_auto_class = {
 
 
 def get_hf_auto_model_class(hf_config):
+    if is_qwen3_omni_thinker_config(hf_config):
+        try:
+            from transformers import Qwen3OmniMoeThinkerForConditionalGeneration
+        except Exception as e:
+            raise ImportError(
+                "Qwen3-Omni thinker training requires a Transformers build that provides "
+                "Qwen3OmniMoeThinkerForConditionalGeneration."
+            ) from e
+
+        return Qwen3OmniMoeThinkerForConditionalGeneration
+
     has_remote_code = hasattr(hf_config, "auto_map") and any(
         hf_config.architectures[0] in val for val in hf_config.auto_map.values()
     )
