@@ -19,7 +19,7 @@ transformers
 # Qwen3-Omni thinker rollout requires vLLM >= 0.13.0, or vLLM-Omni with thinker stage args.
 # vllm>=0.13.0
 wandb
-packaging>=20.0
+packaging>=26.2
 uvicorn
 fastapi
 latex2sympy2_extended
