@@ -115,3 +115,29 @@ def test_convert_qwen3_omni_thinker_weight_keys_for_vllm_maps_language_model_key
         ("language_model.model.layers.0.mlp.gate.weight", already_mapped_weight),
         ("thinker.model.layers.0.input_layernorm.weight", full_checkpoint_weight),
     ]
+
+
+def test_vllm_qwen3_omni_thinker_remap_does_not_require_language_model_attr():
+    from verl.workers.rollout.vllm_rollout.utils import vLLMColocateWorkerExtension
+
+    model_utils = _model_utils()
+
+    class Qwen3OmniMoeThinkerForConditionalGeneration:
+        pass
+
+    model_config = SimpleNamespace(hf_config=SimpleNamespace(model_type="unrelated"))
+    should_remap = vLLMColocateWorkerExtension._should_remap_qwen3_omni_thinker_weights(
+        object(),
+        Qwen3OmniMoeThinkerForConditionalGeneration(),
+        model_config,
+    )
+
+    assert should_remap
+
+    should_remap_from_config = vLLMColocateWorkerExtension._should_remap_qwen3_omni_thinker_weights(
+        object(),
+        object(),
+        SimpleNamespace(hf_config=SimpleNamespace(model_type=model_utils.QWEN3_OMNI_THINKER_MODEL_TYPE)),
+    )
+
+    assert should_remap_from_config

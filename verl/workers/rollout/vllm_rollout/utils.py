@@ -199,11 +199,8 @@ class vLLMColocateWorkerExtension:
             patch_vllm_moe_model_weight_loader(model)
 
     def _should_remap_qwen3_omni_thinker_weights(self, model, model_config) -> bool:
-        if not hasattr(model, "language_model"):
-            return False
-
         model_cls_name = type(model).__name__
-        if "Qwen3Omni" in model_cls_name:
+        if "Qwen3OmniMoeThinker" in model_cls_name:
             return True
 
         hf_config = getattr(model_config, "hf_config", None)
