@@ -25,6 +25,10 @@ import torch
 from vllm.outputs import RequestOutput
 
 from verl.utils.device import is_npu_available
+from verl.utils.model import (
+    convert_qwen3_omni_thinker_weight_keys_for_vllm,
+    is_qwen3_omni_thinker_config,
+)
 from verl.utils.vllm import TensorLoRARequest, VLLMHijack
 from verl.utils.vllm.patch import patch_vllm_moe_model_weight_loader
 from verl.utils.vllm.vllm_fp8_utils import apply_vllm_fp8_patches, is_fp8_model, load_quanted_weights
@@ -194,6 +198,27 @@ class vLLMColocateWorkerExtension:
             # patch weight loader to support MoE model
             patch_vllm_moe_model_weight_loader(model)
 
+    def _should_remap_qwen3_omni_thinker_weights(self, model, model_config) -> bool:
+        if not hasattr(model, "language_model"):
+            return False
+
+        model_cls_name = type(model).__name__
+        if "Qwen3Omni" in model_cls_name:
+            return True
+
+        hf_config = getattr(model_config, "hf_config", None)
+        return is_qwen3_omni_thinker_config(hf_config)
+
+    def _prepare_weights_for_model(
+        self,
+        weights: list[tuple[str, torch.Tensor]],
+        model,
+        model_config,
+    ) -> list[tuple[str, torch.Tensor]]:
+        if self._should_remap_qwen3_omni_thinker_weights(model, model_config):
+            return convert_qwen3_omni_thinker_weight_keys_for_vllm(weights)
+        return weights
+
     def update_weights_from_ipc(self, peft_config: dict = None, base_sync_done=False, use_shm: bool = False):
         """Update the weights of the rollout model."""
         from vllm.platforms import current_platform
@@ -277,15 +302,23 @@ class vLLMColocateWorkerExtension:
             if is_fp8_model(self.model_runner.vllm_config):
                 logger.info(f"FP8 model detected (async): {self.model_runner.vllm_config.quant_config}")
                 # Convert bf16 weights to fp8 format before loading
-                loaded_params = load_quanted_weights(weights, self.model_runner)
+                weights_for_model = self._prepare_weights_for_model(
+                    weights, self.model_runner.model, self.model_runner.vllm_config.model_config
+                )
+                loaded_params = load_quanted_weights(weights_for_model, self.model_runner)
                 logger.info(f"FP8 weights loaded (async), loaded_params: {len(loaded_params)}")
                 # Keep the draft model in sync when present.
                 if self._use_mtp_drafter_weight_sync():
-                    load_quanted_weights(weights, self.model_runner, is_drafter=True)
+                    draft_weights = self._prepare_weights_for_model(
+                        weights,
+                        self._get_drafter_model(),
+                        self._get_draft_model_config(),
+                    )
+                    load_quanted_weights(draft_weights, self.model_runner, is_drafter=True)
             else:
                 logger.info("Loading standard weights (non-FP8, async)")
-                for model in self._iter_all_models():
-                    model.load_weights(weights)
+                for model, model_config in self._iter_all_models_with_config():
+                    model.load_weights(self._prepare_weights_for_model(weights, model, model_config))
 
     def _get_zmq_handle(self) -> str:
         """Get ZMQ handle for communication.

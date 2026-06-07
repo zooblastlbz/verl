@@ -85,3 +85,33 @@ def test_get_hf_auto_model_class_prefers_qwen3_omni_thinker(monkeypatch):
     )
 
     assert model_utils.get_hf_auto_model_class(config) is DummyQwen3OmniThinker
+
+
+def test_convert_qwen3_omni_thinker_weight_keys_for_vllm_maps_language_model_keys():
+    model_utils = _model_utils()
+    layer_weight = object()
+    lm_head_weight = object()
+    visual_weight = object()
+    audio_weight = object()
+    already_mapped_weight = object()
+    full_checkpoint_weight = object()
+
+    converted = model_utils.convert_qwen3_omni_thinker_weight_keys_for_vllm(
+        [
+            ("model.layers.0.self_attn.q_proj.weight", layer_weight),
+            ("lm_head.weight", lm_head_weight),
+            ("visual.patch_embed.proj.weight", visual_weight),
+            ("audio_tower.conv.weight", audio_weight),
+            ("language_model.model.layers.0.mlp.gate.weight", already_mapped_weight),
+            ("thinker.model.layers.0.input_layernorm.weight", full_checkpoint_weight),
+        ]
+    )
+
+    assert converted == [
+        ("language_model.model.layers.0.self_attn.q_proj.weight", layer_weight),
+        ("language_model.lm_head.weight", lm_head_weight),
+        ("visual.patch_embed.proj.weight", visual_weight),
+        ("audio_tower.conv.weight", audio_weight),
+        ("language_model.model.layers.0.mlp.gate.weight", already_mapped_weight),
+        ("thinker.model.layers.0.input_layernorm.weight", full_checkpoint_weight),
+    ]

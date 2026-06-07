@@ -20,6 +20,7 @@ import json
 import os
 import re
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Optional
 
@@ -351,6 +352,28 @@ def convert_weight_keys(state_dict: dict[str, torch.Tensor], model: PreTrainedMo
         original_weights[key] = value
 
     return original_weights
+
+
+def convert_qwen3_omni_thinker_weight_keys_for_vllm(
+    weights: Iterable[tuple[str, torch.Tensor]],
+) -> list[tuple[str, torch.Tensor]]:
+    """Map HF thinker keys to vLLM's wrapped Qwen3-Omni thinker module names.
+
+    vLLM loads Qwen3-Omni thinker weights under ``language_model`` while the HF
+    thinker module used for training exposes bare ``model`` and ``lm_head``
+    keys. Full Omni checkpoint keys with a ``thinker`` prefix are intentionally
+    left unchanged so vLLM's own checkpoint mapper can continue handling them.
+    """
+
+    converted_weights = []
+    for name, weight in weights:
+        if name.startswith("model."):
+            name = f"language_model.{name}"
+        elif name.startswith("lm_head."):
+            name = f"language_model.{name}"
+        converted_weights.append((name, weight))
+
+    return converted_weights
 
 
 def check_exclude_modules(config, key: str) -> bool:
