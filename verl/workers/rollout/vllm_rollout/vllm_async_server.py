@@ -36,6 +36,7 @@ from vllm.v1.engine.async_llm import AsyncLLM
 
 from verl.utils.config import omega_conf_to_dataclass
 from verl.utils.device import get_resource_name, get_visible_devices_keyword, is_torch_npu_available
+from verl.utils.fs import copy_to_local
 from verl.utils.model import is_qwen3_omni_full_config, is_qwen3_omni_thinker_config
 from verl.utils.net_utils import get_free_port, is_valid_ipv6_address
 from verl.utils.profiler import DistProfiler, build_vllm_profiler_args
@@ -215,6 +216,20 @@ class vLLMHttpServer:
         # 1. setup vllm serve cli args
         engine_kwargs = self.config.get("engine_kwargs", {}).get(self._get_engine_kwargs_key(), {}) or {}
         engine_kwargs = {key: val for key, val in engine_kwargs.items() if val is not None}
+        rollout_model_path = engine_kwargs.pop("model_path", None)
+        if rollout_model_path is None:
+            rollout_model_path = self.model_config.local_path
+        elif rollout_model_path != self.model_config.local_path:
+            rollout_model_path = copy_to_local(rollout_model_path, use_shm=self.model_config.use_shm)
+        logger.info(
+            "vLLM rollout model path: %s; actor model path: %s; load_thinker_only=%s; hf_config model_type=%s; "
+            "architectures=%s",
+            rollout_model_path,
+            self.model_config.local_path,
+            getattr(self.model_config, "load_thinker_only", False),
+            getattr(self.model_config.hf_config, "model_type", None),
+            getattr(self.model_config.hf_config, "architectures", None),
+        )
         if self.config.get("limit_images", None):  # support for multi-image data
             engine_kwargs["limit_mm_per_prompt"] = {"image": self.config.get("limit_images")}
         if self.config.cudagraph_capture_sizes:
@@ -364,7 +379,7 @@ class vLLMHttpServer:
         if self.config.enable_rollout_routing_replay:
             args.update({"enable_return_routed_experts": True})
 
-        server_args = ["serve", self.model_config.local_path] + build_cli_args_from_config(args)
+        server_args = ["serve", rollout_model_path] + build_cli_args_from_config(args)
 
         if self.replica_rank == 0:
             pprint(server_args)
