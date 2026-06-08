@@ -95,6 +95,8 @@ def test_convert_qwen3_omni_thinker_weight_keys_for_vllm_maps_language_model_key
     audio_weight = object()
     already_mapped_weight = object()
     full_checkpoint_weight = object()
+    compiled_layer_weight = object()
+    compiled_visual_weight = object()
 
     converted = model_utils.convert_qwen3_omni_thinker_weight_keys_for_vllm(
         [
@@ -104,6 +106,8 @@ def test_convert_qwen3_omni_thinker_weight_keys_for_vllm_maps_language_model_key
             ("audio_tower.conv.weight", audio_weight),
             ("language_model.model.layers.0.mlp.gate.weight", already_mapped_weight),
             ("thinker.model.layers.0.input_layernorm.weight", full_checkpoint_weight),
+            ("_orig_mod.model.layers.1.input_layernorm.weight", compiled_layer_weight),
+            ("_orig_mod.visual.blocks.0.norm1.weight", compiled_visual_weight),
         ]
     )
 
@@ -114,6 +118,8 @@ def test_convert_qwen3_omni_thinker_weight_keys_for_vllm_maps_language_model_key
         ("audio_tower.conv.weight", audio_weight),
         ("language_model.model.layers.0.mlp.gate.weight", already_mapped_weight),
         ("thinker.model.layers.0.input_layernorm.weight", full_checkpoint_weight),
+        ("language_model.model.layers.1.input_layernorm.weight", compiled_layer_weight),
+        ("visual.blocks.0.norm1.weight", compiled_visual_weight),
     ]
 
 
@@ -143,3 +149,12 @@ def test_vllm_qwen3_omni_thinker_remap_does_not_require_language_model_attr():
     )
 
     assert should_remap_from_config
+
+    should_remap_compiled_prefix = vLLMColocateWorkerExtension._should_remap_qwen3_omni_thinker_weights(
+        object(),
+        [("_orig_mod.visual.blocks.0.norm1.weight", object())],
+        Qwen3OmniMoeThinkerForConditionalGeneration(),
+        model_config,
+    )
+
+    assert should_remap_compiled_prefix

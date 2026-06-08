@@ -365,12 +365,20 @@ def convert_qwen3_omni_thinker_weight_keys_for_vllm(
     left unchanged so vLLM's own checkpoint mapper can continue handling them.
     """
 
+    prefix_mapping = (
+        ("_orig_mod.model.", "language_model.model."),
+        ("_orig_mod.lm_head.", "language_model.lm_head."),
+        ("_orig_mod.", ""),
+        ("model.", "language_model.model."),
+        ("lm_head.", "language_model.lm_head."),
+    )
+
     converted_weights = []
     for name, weight in weights:
-        if name.startswith("model."):
-            name = f"language_model.{name}"
-        elif name.startswith("lm_head."):
-            name = f"language_model.{name}"
+        for source_prefix, target_prefix in prefix_mapping.items():
+            if name.startswith(source_prefix):
+                name = f"{target_prefix}{name.removeprefix(source_prefix)}"
+                break
         converted_weights.append((name, weight))
 
     return converted_weights

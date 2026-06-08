@@ -42,6 +42,7 @@ VLLM_LORA_NAME = "123"
 VLLM_LORA_PATH = "simon_lora_path"
 
 VLLM_ASCEND_REQUIRED_ENV_VARS = {"VLLM_ALL2ALL_BACKEND": "flashinfer_all2allv", "VLLM_ASCEND_ENABLE_NZ": "0"}
+QWEN3_OMNI_HF_THINKER_SYNC_PREFIXES = ("model.", "lm_head.", "_orig_mod.")
 
 
 def set_death_signal():
@@ -219,7 +220,7 @@ class vLLMColocateWorkerExtension:
         model,
         model_config,
     ) -> bool:
-        has_hf_thinker_keys = any(name.startswith(("model.", "lm_head.")) for name, _ in weights)
+        has_hf_thinker_keys = any(name.startswith(QWEN3_OMNI_HF_THINKER_SYNC_PREFIXES) for name, _ in weights)
         if not has_hf_thinker_keys:
             return False
 
@@ -240,13 +241,31 @@ class vLLMColocateWorkerExtension:
         model_config,
     ) -> list[tuple[str, torch.Tensor]]:
         if self._should_remap_qwen3_omni_thinker_weights(weights, model, model_config):
+            original_keys = [name for name, _ in weights]
+            original_hf_key_count = sum(name.startswith(QWEN3_OMNI_HF_THINKER_SYNC_PREFIXES) for name in original_keys)
             if not getattr(self, "_verl_logged_qwen3_omni_thinker_remap", False):
+                sample_key = next(
+                    (name for name in original_keys if name.startswith(QWEN3_OMNI_HF_THINKER_SYNC_PREFIXES)),
+                    None,
+                )
                 logger.warning(
                     "Remapping Qwen3-Omni thinker weights for vLLM online sync: "
-                    "model.* -> language_model.model.*, lm_head.* -> language_model.lm_head.*"
+                    "model.* -> language_model.model.*, lm_head.* -> language_model.lm_head.*; "
+                    "first bucket raw HF thinker keys=%d; sample=%s",
+                    original_hf_key_count,
+                    sample_key,
                 )
                 self._verl_logged_qwen3_omni_thinker_remap = True
-            return convert_qwen3_omni_thinker_weight_keys_for_vllm(weights)
+            converted_weights = convert_qwen3_omni_thinker_weight_keys_for_vllm(weights)
+            remaining_hf_keys = [
+                name for name, _ in converted_weights if name.startswith(QWEN3_OMNI_HF_THINKER_SYNC_PREFIXES)
+            ]
+            if remaining_hf_keys:
+                raise RuntimeError(
+                    "Qwen3-Omni thinker weight remap left HF-style keys before vLLM load_weights: "
+                    f"{remaining_hf_keys[:5]}"
+                )
+            return converted_weights
         return weights
 
     def update_weights_from_ipc(self, peft_config: dict = None, base_sync_done=False, use_shm: bool = False):
