@@ -27,6 +27,7 @@ from vllm.outputs import RequestOutput
 from verl.utils.device import is_npu_available
 from verl.utils.model import (
     convert_qwen3_omni_thinker_weight_keys_for_vllm,
+    is_qwen3_omni_full_config,
     is_qwen3_omni_thinker_config,
 )
 from verl.utils.vllm import TensorLoRARequest, VLLMHijack
@@ -192,12 +193,28 @@ class vLLMColocateWorkerExtension:
             if draft_cfg is not None:
                 yield self._get_drafter_model(), draft_cfg
 
+    def _is_qwen3_omni_thinker_rollout_model(self, model, model_config) -> bool:
+        if "Qwen3OmniMoeThinker" in type(model).__name__:
+            return True
+
+        hf_config = getattr(model_config, "hf_config", None)
+        return is_qwen3_omni_full_config(hf_config) or is_qwen3_omni_thinker_config(hf_config)
+
+    def _patch_vllm_moe_weight_loader_if_needed(self, model, model_config) -> None:
+        if self._is_qwen3_omni_thinker_rollout_model(model, model_config):
+            if not getattr(self, "_verl_logged_skip_qwen3_omni_moe_patch", False):
+                logger.warning("Skipping legacy vLLM MoE weight_loader patch for Qwen3-Omni thinker rollout.")
+                self._verl_logged_skip_qwen3_omni_moe_patch = True
+            return
+
+        patch_vllm_moe_model_weight_loader(model)
+
     def monkey_patch_model(self, vocab_size: int):
-        for model in self._iter_all_models():
+        for model, model_config in self._iter_all_models_with_config():
             # patch compute_logits to avoid sampling OOV token
             monkey_patch_compute_logits(model, vocab_size)
             # patch weight loader to support MoE model
-            patch_vllm_moe_model_weight_loader(model)
+            self._patch_vllm_moe_weight_loader_if_needed(model, model_config)
 
     def _model_has_vllm_qwen3_omni_thinker_names(self, model) -> bool:
         cached = getattr(model, "_verl_has_vllm_qwen3_omni_thinker_names", None)
@@ -224,12 +241,7 @@ class vLLMColocateWorkerExtension:
         if not has_hf_thinker_keys:
             return False
 
-        model_cls_name = type(model).__name__
-        if "Qwen3OmniMoeThinker" in model_cls_name:
-            return True
-
-        hf_config = getattr(model_config, "hf_config", None)
-        if is_qwen3_omni_thinker_config(hf_config):
+        if self._is_qwen3_omni_thinker_rollout_model(model, model_config):
             return True
 
         return self._model_has_vllm_qwen3_omni_thinker_names(model)
@@ -299,8 +311,8 @@ class vLLMColocateWorkerExtension:
             logger.info("ModelOpt: prepare_modelopt_for_weight_reload completed")
         elif use_standard_weight_load:
             # Re-apply here because async IPC weight sync can happen long after init and lose MoE weight_loader attrs.
-            for model in self._iter_all_models():
-                patch_vllm_moe_model_weight_loader(model)
+            for model, model_config in self._iter_all_models_with_config():
+                self._patch_vllm_moe_weight_loader_if_needed(model, model_config)
 
         assert self.device is not None
         receiver = BucketedWeightReceiver(

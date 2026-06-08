@@ -124,9 +124,10 @@ def test_convert_qwen3_omni_thinker_weight_keys_for_vllm_maps_language_model_key
 
 
 def test_vllm_qwen3_omni_thinker_remap_does_not_require_language_model_attr():
-    from verl.workers.rollout.vllm_rollout.utils import vLLMColocateWorkerExtension
+    from verl.workers.rollout.vllm_rollout import utils as vllm_utils
 
     model_utils = _model_utils()
+    vLLMColocateWorkerExtension = vllm_utils.vLLMColocateWorkerExtension
 
     class Qwen3OmniMoeThinkerForConditionalGeneration:
         pass
@@ -158,3 +159,39 @@ def test_vllm_qwen3_omni_thinker_remap_does_not_require_language_model_attr():
     )
 
     assert should_remap_compiled_prefix
+
+
+def test_vllm_qwen3_omni_thinker_skips_legacy_moe_patch(monkeypatch):
+    from verl.workers.rollout.vllm_rollout import utils as vllm_utils
+
+    model_utils = _model_utils()
+    vLLMColocateWorkerExtension = vllm_utils.vLLMColocateWorkerExtension
+
+    class Qwen3OmniMoeThinkerForConditionalGeneration:
+        pass
+
+    class OtherModel:
+        pass
+
+    patch_calls = []
+
+    def fake_patch(model):
+        patch_calls.append(model)
+
+    monkeypatch.setattr(vllm_utils, "patch_vllm_moe_model_weight_loader", fake_patch)
+    extension = SimpleNamespace()
+    thinker_config = SimpleNamespace(hf_config=SimpleNamespace(model_type=model_utils.QWEN3_OMNI_THINKER_MODEL_TYPE))
+    other_model = OtherModel()
+
+    vLLMColocateWorkerExtension._patch_vllm_moe_weight_loader_if_needed(
+        extension,
+        Qwen3OmniMoeThinkerForConditionalGeneration(),
+        thinker_config,
+    )
+    vLLMColocateWorkerExtension._patch_vllm_moe_weight_loader_if_needed(
+        extension,
+        other_model,
+        SimpleNamespace(hf_config=SimpleNamespace(model_type="other")),
+    )
+
+    assert patch_calls == [other_model]
