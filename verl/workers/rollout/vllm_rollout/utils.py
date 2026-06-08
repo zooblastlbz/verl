@@ -198,13 +198,40 @@ class vLLMColocateWorkerExtension:
             # patch weight loader to support MoE model
             patch_vllm_moe_model_weight_loader(model)
 
-    def _should_remap_qwen3_omni_thinker_weights(self, model, model_config) -> bool:
+    def _model_has_vllm_qwen3_omni_thinker_names(self, model) -> bool:
+        cached = getattr(model, "_verl_has_vllm_qwen3_omni_thinker_names", None)
+        if cached is not None:
+            return cached
+
+        try:
+            has_vllm_thinker_names = any(
+                name.startswith("language_model.model.") or name.startswith("language_model.lm_head.")
+                for name, _ in model.named_parameters()
+            )
+        except Exception:
+            has_vllm_thinker_names = False
+        setattr(model, "_verl_has_vllm_qwen3_omni_thinker_names", has_vllm_thinker_names)
+        return has_vllm_thinker_names
+
+    def _should_remap_qwen3_omni_thinker_weights(
+        self,
+        weights: list[tuple[str, torch.Tensor]],
+        model,
+        model_config,
+    ) -> bool:
+        has_hf_thinker_keys = any(name.startswith(("model.", "lm_head.")) for name, _ in weights)
+        if not has_hf_thinker_keys:
+            return False
+
         model_cls_name = type(model).__name__
         if "Qwen3OmniMoeThinker" in model_cls_name:
             return True
 
         hf_config = getattr(model_config, "hf_config", None)
-        return is_qwen3_omni_thinker_config(hf_config)
+        if is_qwen3_omni_thinker_config(hf_config):
+            return True
+
+        return self._model_has_vllm_qwen3_omni_thinker_names(model)
 
     def _prepare_weights_for_model(
         self,
@@ -212,7 +239,13 @@ class vLLMColocateWorkerExtension:
         model,
         model_config,
     ) -> list[tuple[str, torch.Tensor]]:
-        if self._should_remap_qwen3_omni_thinker_weights(model, model_config):
+        if self._should_remap_qwen3_omni_thinker_weights(weights, model, model_config):
+            if not getattr(self, "_verl_logged_qwen3_omni_thinker_remap", False):
+                logger.warning(
+                    "Remapping Qwen3-Omni thinker weights for vLLM online sync: "
+                    "model.* -> language_model.model.*, lm_head.* -> language_model.lm_head.*"
+                )
+                self._verl_logged_qwen3_omni_thinker_remap = True
             return convert_qwen3_omni_thinker_weight_keys_for_vllm(weights)
         return weights
 

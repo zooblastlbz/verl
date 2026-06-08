@@ -128,6 +128,7 @@ def test_vllm_qwen3_omni_thinker_remap_does_not_require_language_model_attr():
     model_config = SimpleNamespace(hf_config=SimpleNamespace(model_type="unrelated"))
     should_remap = vLLMColocateWorkerExtension._should_remap_qwen3_omni_thinker_weights(
         object(),
+        [("model.layers.0.input_layernorm.weight", object())],
         Qwen3OmniMoeThinkerForConditionalGeneration(),
         model_config,
     )
@@ -136,6 +137,7 @@ def test_vllm_qwen3_omni_thinker_remap_does_not_require_language_model_attr():
 
     should_remap_from_config = vLLMColocateWorkerExtension._should_remap_qwen3_omni_thinker_weights(
         object(),
+        [("lm_head.weight", object())],
         object(),
         SimpleNamespace(hf_config=SimpleNamespace(model_type=model_utils.QWEN3_OMNI_THINKER_MODEL_TYPE)),
     )

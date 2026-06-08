@@ -24,7 +24,8 @@ from typing import Any
 _CHOICES = tuple("ABCDEFGH")
 _FORMAT_WEIGHT = 0.1
 
-_JUDGE_PROMPT = """You are a strict evaluator assessing answer correctness. You must output 1 for fully correct answers and 0 for any other case.
+_JUDGE_PROMPT = """You are a strict evaluator assessing answer correctness.
+You must output 1 for fully correct answers and 0 for any other case.
 # Input
 
 Ground Truth Answer:
@@ -40,10 +41,12 @@ Model Prediction:
 ```
 # Evaluation Rules
 
-- For multiple-choice questions: Score 1 if the predicted answer matches the ground truth answer, it can be directly in option letters or the content of the options.
+- For multiple-choice questions: Score 1 if the predicted answer matches the ground truth answer,
+  it can be directly in option letters or the content of the options.
 - For open-ended questions:
  * Score 1 if the prediction matches the answer semantically, it can be in different format.
- * Score 0 for partially correct answers or answers with extra incorrect information, even if the reasoning process is correct.
+ * Score 0 for partially correct answers or answers with extra incorrect information,
+   even if the reasoning process is correct.
 - Ignore minor differences in formatting, capitalization, or spacing since the model may explain in a different way.
 - Treat numerical answers as correct if they match within reasonable precision
 - For questions requiring units, both value and unit must be correct
@@ -51,7 +54,9 @@ Model Prediction:
 
 1 or 0"""
 
-_JUDGE_PROMPT_WITH_QUESTION = """You are a strict evaluator assessing answer correctness. You must output 1 for fully correct answers and 0 for any other case. You will receive the question, the ground truth answer, and the model prediction.
+_JUDGE_PROMPT_WITH_QUESTION = """You are a strict evaluator assessing answer correctness.
+You must output 1 for fully correct answers and 0 for any other case.
+You will receive the question, the ground truth answer, and the model prediction.
 # Input
 
 Question:
@@ -73,10 +78,12 @@ Model Prediction:
 ```
 # Evaluation Rules
 
-- For multiple-choice questions: Score 1 if the predicted answer matches the ground truth answer, it can be directly in option letters or the content of the options.
+- For multiple-choice questions: Score 1 if the predicted answer matches the ground truth answer,
+  it can be directly in option letters or the content of the options.
 - For open-ended questions:
  * Score 1 if the prediction matches the answer semantically, it can be in different format.
- * Score 0 for partially correct answers or answers with extra incorrect information, even if the reasoning process is correct.
+ * Score 0 for partially correct answers or answers with extra incorrect information,
+   even if the reasoning process is correct.
 - Ignore minor differences in formatting, capitalization, or spacing since the model may explain in a different way.
 - Treat numerical answers as correct if they match within reasonable precision
 - For questions requiring units, both value and unit must be correct
