@@ -375,7 +375,7 @@ def convert_qwen3_omni_thinker_weight_keys_for_vllm(
 
     converted_weights = []
     for name, weight in weights:
-        for source_prefix, target_prefix in prefix_mapping.items():
+        for source_prefix, target_prefix in prefix_mapping:
             if name.startswith(source_prefix):
                 name = f"{target_prefix}{name.removeprefix(source_prefix)}"
                 break
