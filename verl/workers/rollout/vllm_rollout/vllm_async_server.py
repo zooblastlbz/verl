@@ -525,7 +525,7 @@ class vLLMHttpServer:
         sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
-        prompt_ids = qwen2_5_vl_dedup_image_tokens(prompt_ids, self.model_config.processor)
+        prompt_ids = qwen2_5_vl_dedup_image_tokens(prompt_ids, getattr(self.model_config, "processor", None))
         multi_modal_data = {}
         if image_data is not None:
             multi_modal_data["image"] = image_data
@@ -590,7 +590,12 @@ class vLLMHttpServer:
 
         routed_experts = None
         if self.config.enable_rollout_routing_replay:
-            routed_experts = final_res.outputs[0].routed_experts
+            routed_experts = getattr(final_res.outputs[0], "routed_experts", None)
+            if routed_experts is None:
+                logger.warning(
+                    "enable_rollout_routing_replay=True, but vLLM output does not include routed_experts. "
+                    "Continuing without rollout routing replay metadata."
+                )
 
         # Determine stop reason from finish_reason
         finish_reason = final_res.outputs[0].finish_reason

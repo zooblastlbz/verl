@@ -21,6 +21,7 @@ import uvicorn
 import yaml
 from fastapi import FastAPI
 
+from verl.utils.tokenizer import get_processor_token_id
 from verl.workers.config.rollout import PrometheusConfig
 
 logger = logging.getLogger(__file__)
@@ -104,9 +105,18 @@ def qwen2_5_vl_dedup_image_tokens(prompt_ids: list[int], processor):
         and hasattr(processor, "image_processor")
         and "Qwen2VLImageProcessor" in processor.image_processor.__class__.__name__
     ):
+        image_token_id = get_processor_token_id(processor, "image")
+        video_token_id = get_processor_token_id(processor, "video")
+        if image_token_id is None and video_token_id is None:
+            return prompt_ids
+
         prompt_ids = np.array(prompt_ids)
         mask = np.ones(len(prompt_ids), dtype=bool)
-        is_value = (prompt_ids == processor.image_token_id) | (prompt_ids == processor.video_token_id)
+        is_value = np.zeros(len(prompt_ids), dtype=bool)
+        if image_token_id is not None:
+            is_value |= prompt_ids == image_token_id
+        if video_token_id is not None:
+            is_value |= prompt_ids == video_token_id
         mask[1:] &= ~(is_value[1:] & is_value[:-1])
         return prompt_ids[mask].tolist()
     else:
